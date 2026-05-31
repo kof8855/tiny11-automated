@@ -61,28 +61,32 @@ jobs:
       - name: Generate release tag and ISO name
         shell: powershell
         run: |
-          # Get date for tag and ISO naming
-          $date = Get-Date -Format 'yyyy-MM-dd'
+          # Get date for tag and ISO naming (Beijing time = UTC+8)
+          $beijingDate = (Get-Date).ToUniversalTime().AddHours(8)
+          $dateStr = $beijingDate.ToString('yyyy-MM-dd-HHmm')
+          $dateShort = $beijingDate.ToString('yyyy-MM-dd')
           $version = "${{ github.event.inputs.windows_version }}"
 
-          # Get edition based on index
+          # Get edition based on index (2=Pro for our 2-edition ISO)
           $index = "${{ github.event.inputs.image_index }}"
           $editions = @{
               "1" = "Home"
+              "2" = "Pro"
               "4" = "Education"
               "6" = "Pro"
               "7" = "ProN"
           }
           $edition = $editions[$index]
+          if (-not $edition) { $edition = "Unknown" }
 
           $language = "${{ github.event.inputs.language }}" -replace '[^a-zA-Z]', ''
 
-          # Generate tag and names - New structure: Tiny11Core-EDITION-VERSION for folders
+          # Placeholder names (will be updated after UUP build with actual version)
           $folderName = "Tiny11Core-$edition-$version"
-          $isoName = "Tiny11Core-$version-$language-$edition-$date.iso"
+          $isoName = "Tiny11Core-$version-$language-$edition-BUILD-$dateStr.iso"
 
           # For GitHub releases, we'll use a more specific tag with date
-          $baseTag = "tiny11core-$version-$date"
+          $baseTag = "tiny11core-$version-$dateShort"
 
           # Check if tag already exists
           $existingTags = $(git tag -l "$baseTag*" | Measure-Object).Count
@@ -98,6 +102,8 @@ jobs:
           Add-Content -Path $env:GITHUB_ENV -Value "ISO_FILENAME=$isoName"
           Add-Content -Path $env:GITHUB_ENV -Value "FOLDER_NAME=$folderName"
           Add-Content -Path $env:GITHUB_ENV -Value "EDITION_NAME=$edition"
+          Add-Content -Path $env:GITHUB_ENV -Value "BUILD_NUMBER=$version"
+          Add-Content -Path $env:GITHUB_ENV -Value "ISO_DATE=$dateStr"
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -182,6 +188,68 @@ jobs:
 
           $sizeGB = [math]::Round((Get-Item "Win11_Source.iso").Length / 1GB, 2)
           Write-Output "ISO created successfully: Win11_Source.iso (${sizeGB}GB) in $($buildTime.TotalMinutes.ToString('F2')) minutes"
+
+      - name: Extract version and update ISO filename
+        shell: powershell
+        run: |
+          Write-Output "=== Extracting version from UUP ISO ==="
+          
+          # Read the version info saved by download-uup-windows.ps1
+          $buildVersion = ""
+          if (Test-Path "uup_version.txt") {
+            $buildVersion = Get-Content "uup_version.txt" -Raw
+            $buildVersion = $buildVersion.Trim()
+            Write-Output "UUP build version: $buildVersion"
+          } else {
+            # Try to extract from existing ISO name
+            $existing = Get-ChildItem -Path "." -Filter "*.iso" -ErrorAction SilentlyContinue |
+                       Where-Object { $_.Name -match "(\d+\.\d+)_" } |
+                       Select-Object -First 1
+            if ($existing -and $existing.Name -match "(\d+\.\d+)") {
+              $buildVersion = $Matches[1]
+              Write-Output "Extracted build version from ISO: $buildVersion"
+            } else {
+              Write-Warning "Could not determine build version, using fallback"
+              $buildVersion = "${{ github.event.inputs.windows_version }}"
+            }
+          }
+          
+          # Get Beijing time (UTC+8)
+          $beijingDate = (Get-Date).ToUniversalTime().AddHours(8)
+          $dateStr = $beijingDate.ToString('yyyy-MM-dd-HHmm')
+          $dateShort = $beijingDate.ToString('yyyy-MM-dd')
+          
+          $version = "${{ github.event.inputs.windows_version }}"
+          $edition = "${{ env.EDITION_NAME }}"
+          $language = "${{ github.event.inputs.language }}" -replace '[^a-zA-Z]', ''
+          
+          # Generate final ISO name: Tiny11Core-22H2-Chinese-Pro-22621.7079_2026-05-31-1430.iso
+          $isoName = "Tiny11Core-$version-$language-$edition-${buildVersion}_$dateStr.iso"
+          
+          # Also generate the folder name and release tag
+          $folderName = "Tiny11Core-$edition-$version-${buildVersion}"
+          $baseTag = "tiny11core-$version-${buildVersion}-$dateShort"
+          
+          $existingTags = $(git tag -l "$baseTag*" | Measure-Object).Count
+          if ($existingTags -gt 0) {
+              $baseTag = "$baseTag-$($existingTags + 1)"
+          }
+          
+          Write-Output "Final ISO name: $isoName"
+          Write-Output "Folder name: $folderName"
+          Write-Output "Release tag: $baseTag"
+          
+          # Update environment variables
+          $env:ISO_FILENAME = $isoName
+          $env:FOLDER_NAME = $folderName
+          $env:RELEASE_TAG = $baseTag
+          $env:BUILD_NUMBER = $buildVersion
+          
+          # Update the GitHub Actions env file for next steps
+          Add-Content -Path $env:GITHUB_ENV -Value "ISO_FILENAME=$isoName"
+          Add-Content -Path $env:GITHUB_ENV -Value "FOLDER_NAME=$folderName"
+          Add-Content -Path $env:GITHUB_ENV -Value "RELEASE_TAG=$baseTag"
+          Add-Content -Path $env:GITHUB_ENV -Value "BUILD_NUMBER=$buildVersion"
 
       - name: Mount Windows ISO
         shell: powershell
