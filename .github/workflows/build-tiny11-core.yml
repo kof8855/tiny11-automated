@@ -9,11 +9,11 @@ on:
   workflow_dispatch:
     inputs:
       windows_version:
-        'description: 'Windows image index (2=Pro for 2-edition ISO)'
+        description: 'Windows version (e.g., 22H2, 24H2, 25H2)'
         required: false
         default: '22H2'
       image_index:
-        'description: 'Windows image index (2=Pro for 2-edition ISO)'
+        description: 'Windows image index (2=Pro for 2-edition ISO)'
         required: true
         default: '2'
         type: choice
@@ -24,16 +24,16 @@ on:
           - '6'
           - '7'
       language:
-        'description: 'Windows image index (2=Pro for 2-edition ISO)'
+        description: 'Language'
         required: false
         default: 'Chinese'
       skip_cleanup:
-        'description: 'Windows image index (2=Pro for 2-edition ISO)'
+        description: 'Skip cleanup (for debugging)'
         required: false
         default: false
         type: boolean
       enable_dotnet35:
-        'description: 'Windows image index (2=Pro for 2-edition ISO)'
+        description: 'Enable .NET Framework 3.5'
         type: boolean
         required: false
         default: false
