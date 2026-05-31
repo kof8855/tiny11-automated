@@ -194,25 +194,44 @@ jobs:
         run: |
           Write-Output "=== Extracting version from UUP ISO ==="
           
-          # Read the version info saved by download-uup-windows.ps1
+          # Method 1: Read from uup_version.txt
           $buildVersion = ""
           if (Test-Path "uup_version.txt") {
-            $buildVersion = Get-Content "uup_version.txt" -Raw
-            $buildVersion = $buildVersion.Trim()
-            Write-Output "UUP build version: $buildVersion"
+            $raw = Get-Content "uup_version.txt" -Raw
+            if ($raw) { $buildVersion = $raw.Trim() }
+          }
+          
+          # Method 2: Extract from Win11_Source.iso filename
+          if (-not $buildVersion -and (Test-Path "Win11_Source.iso")) {
+            $isoPath = "Win11_Source.iso"
           } else {
-            # Try to extract from existing ISO name
-            $existing = Get-ChildItem -Path "." -Filter "*.iso" -ErrorAction SilentlyContinue |
-                       Where-Object { $_.Name -match "(\d+\.\d+)_" } |
-                       Select-Object -First 1
-            if ($existing -and $existing.Name -match "(\d+\.\d+)") {
+            $isoPath = ""
+          }
+          if (-not $buildVersion) {
+            # Find any ISO and extract version
+            $isoFile = Get-ChildItem -Path "." -Filter "*.iso" -ErrorAction SilentlyContinue |
+                      Where-Object { $_.Length -gt 500MB } |
+                      Sort-Object Length -Descending | Select-Object -First 1
+            if ($isoFile) { $isoPath = $isoFile.FullName }
+          }
+          
+          if (-not $buildVersion -and $isoPath) {
+            # Patterns: "22621.1_MULTI" or "22631.7079_"
+            $name = [System.IO.Path]::GetFileName($isoPath)
+            if ($name -match "(\d+\.\d+)[_\.]") {
               $buildVersion = $Matches[1]
-              Write-Output "Extracted build version from ISO: $buildVersion"
-            } else {
-              Write-Warning "Could not determine build version, using fallback"
-              $buildVersion = "${{ github.event.inputs.windows_version }}"
+            } elseif ($name -match "(\d{5})[_\.]") {
+              $buildVersion = $Matches[1]
             }
           }
+          
+          # Fallback to Windows version input
+          if (-not $buildVersion) {
+            Write-Warning "Could not extract build version from ISO, using version input"
+            $buildVersion = "${{ github.event.inputs.windows_version }}"
+          }
+          
+          Write-Output "Build version: $buildVersion"
           
           # Get Beijing time (UTC+8)
           $beijingDate = (Get-Date).ToUniversalTime().AddHours(8)
@@ -223,10 +242,8 @@ jobs:
           $edition = "${{ env.EDITION_NAME }}"
           $language = "${{ github.event.inputs.language }}" -replace '[^a-zA-Z]', ''
           
-          # Generate final ISO name: Tiny11Core-22H2-Chinese-Pro-22621.7079_2026-05-31-1430.iso
+          # Generate final ISO name
           $isoName = "Tiny11Core-$version-$language-$edition-${buildVersion}_$dateStr.iso"
-          
-          # Also generate the folder name and release tag
           $folderName = "Tiny11Core-$edition-$version-${buildVersion}"
           $baseTag = "tiny11core-$version-${buildVersion}-$dateShort"
           
@@ -239,13 +256,7 @@ jobs:
           Write-Output "Folder name: $folderName"
           Write-Output "Release tag: $baseTag"
           
-          # Update environment variables
-          $env:ISO_FILENAME = $isoName
-          $env:FOLDER_NAME = $folderName
-          $env:RELEASE_TAG = $baseTag
-          $env:BUILD_NUMBER = $buildVersion
-          
-          # Update the GitHub Actions env file for next steps
+          # Update GitHub Actions environment
           Add-Content -Path $env:GITHUB_ENV -Value "ISO_FILENAME=$isoName"
           Add-Content -Path $env:GITHUB_ENV -Value "FOLDER_NAME=$folderName"
           Add-Content -Path $env:GITHUB_ENV -Value "RELEASE_TAG=$baseTag"

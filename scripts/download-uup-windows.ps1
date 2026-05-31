@@ -68,16 +68,21 @@ if ($iso -and $iso.Length -gt 500MB) {
     Write-Output "Found ISO: $($iso.Name) (${gb}GB)"
     
     # Extract build number from ISO name (e.g., "22621.1_MULTI_X64_ZH-CN.ISO")
+    # Patterns: "22621.1_" or "22631.7079_" or "22621_MULTI"
     $buildNumber = ""
-    if ($iso.Name -match "(\d+\.\d+)_") {
+    if ($iso.Name -match "(\d+\.\d+)[_\.]") {
+        $buildNumber = $Matches[1]
+    } elseif ($iso.Name -match "(\d{5})[_\.]") {
         $buildNumber = $Matches[1]
     }
-    Write-Output "Detected build: $buildNumber"
     
-    # Save version info to env for the workflow to use
-    $versionFile = "uup_version.txt"
-    $buildNumber | Out-File -FilePath $versionFile -NoNewline
-    Write-Output "Version saved: $buildNumber"
+    Write-Output "Detected build: '$buildNumber'"
+    
+    # Save version info - write to file and also OUTPUT for capture
+    $buildNumber | Out-File -FilePath "uup_version.txt" -NoNewline -Force
+    
+    # Output in a parseable format for the workflow
+    Write-Output "UUP_VERSION=$buildNumber"
     
     # Move to Win11_Source.iso
     if ($iso.Name -ne "Win11_Source.iso") {
