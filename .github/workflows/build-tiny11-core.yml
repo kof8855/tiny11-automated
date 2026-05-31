@@ -13,11 +13,12 @@ on:
         required: false
         default: '22H2'
       image_index:
-        description: 'Windows image index (4=Pro for multi-edition ISO)'
+        description: 'Windows image index (2=Pro for 2-edition ISO)''
         required: true
-        default: '4'
+        default: '2'
         type: choice
         options:
+          - '2'
           - '1'
           - '4'
           - '6'
