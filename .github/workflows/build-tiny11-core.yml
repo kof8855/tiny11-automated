@@ -13,9 +13,9 @@ on:
         required: false
         default: '22H2'
       image_index:
-        description: 'Windows image index (1=Home, 4=Education, 6=Pro, 7=Pro N)'
+        description: 'Windows image index (1=Home/Pro single-edition)'
         required: true
-        default: '6'
+        default: '1'
         type: choice
         options:
           - '1'

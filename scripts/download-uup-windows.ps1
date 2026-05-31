@@ -6,114 +6,129 @@
 #>
 
 param(
-    [Parameter(Mandatory=$false)]
     [string]$UupSetId = "7f6836ae-9517-4e27-9f76-5823e0b6744c",
-    
-    [Parameter(Mandatory=$false)]
     [string]$Pack = "zh-cn",
-    
-    [Parameter(Mandatory=$false)]
     [string]$Edition = "professional%3Bcore",
-    
-    [Parameter(Mandatory=$false)]
     [string]$OutputIso = "Win11_Source.iso"
 )
 
-$ErrorActionPreference = "Stop"
 $startTime = Get-Date
 
-Write-Output "=== UUP Dump ISO Downloader for Windows ==="
-Write-Output "Set ID: $UupSetId"
-Write-Output "Pack: $Pack"
-Write-Output "Edition: $Edition"
-Write-Output "Output: $OutputIso"
-
-# Step 1: Install aria2c if not present
-if (-not (Get-Command aria2c -ErrorAction SilentlyContinue)) {
-    Write-Output "Installing aria2c via chocolatey..."
-    choco install aria2 -y --no-progress
+function Write-Step {
+    param([string]$Message)
+    Write-Output "[$(Get-Date -Format 'HH:mm:ss')] $Message"
 }
 
-# Step 2: Create directories
+Write-Step "=== UUP Dump ISO Builder for Windows ==="
+Write-Step "SetID=$UupSetId Pack=$Pack Edition=$Edition"
+
+# Step 1: Verify tools
+Write-Step "Checking tools..."
+if (-not (Get-Command aria2c -ErrorAction SilentlyContinue)) {
+    Write-Step "aria2c not found, installing via choco..."
+    choco install aria2 -y --no-progress 2>&1 | Out-Null
+}
+$aria2 = (Get-Command aria2c).Source
+Write-Step "aria2c: $aria2"
+
+# Step 2: Create dirs & copy config
 New-Item -ItemType Directory -Force -Path "files" | Out-Null
 New-Item -ItemType Directory -Force -Path "UUPs" | Out-Null
 
-# Step 3: Download UUP converter (7zr.exe + uup-converter-wimlib.7z)
-Write-Output "Downloading UUP converter (7zr.exe)..."
-$7zrUrl = "https://uupdump.net/misc/7zr.exe"
-$7zrPath = "files\7zr.exe"
-aria2c --no-conf --console-log-level=warn -x4 -s4 --allow-overwrite=true --auto-file-renaming=false -d"files" -o"7zr.exe" $7zrUrl
-if (-not (Test-Path $7zrPath)) { throw "7zr.exe download failed" }
-
-Write-Output "Downloading uup-converter-wimlib..."
-$convUrl = "https://uupdump.net/misc/uup-converter-wimlib-v121.7z"
-$convPath = "files\uup-converter-wimlib.7z"
-aria2c --no-conf --console-log-level=warn -x4 -s4 --allow-overwrite=true --auto-file-renaming=false -d"files" -o"uup-converter-wimlib.7z" $convUrl
-if (-not (Test-Path $convPath)) { throw "uup-converter download failed" }
-
-# Step 4: Extract UUP converter (skip ConvertConfig.ini and CustomAppsList.txt - keep ours)
-Write-Output "Extracting UUP converter..."
-& $7zrPath -x!ConvertConfig.ini -x!CustomAppsList.txt -y x $convPath
-if (-not (Test-Path "convert-UUP.cmd")) { throw "Converter extraction failed - convert-UUP.cmd not found" }
-
-# Step 5: Copy our custom config files
 if (Test-Path "ConvertConfig.ini") {
-    Write-Output "Using custom ConvertConfig.ini"
-}
-if (Test-Path "CustomAppsList.txt") {
-    Write-Output "Using custom CustomAppsList.txt"
+    Write-Step "ConvertConfig.ini found (custom config)"
+    Get-Content "ConvertConfig.ini" | Select-String "AutoExit|AutoStart|SkipApps"
 }
 
-# Step 6: Retrieve aria2 script for UUP set
-Write-Output "Retrieving aria2 script for UUP set..."
-$aria2Script = "aria2_script.$([System.IO.Path]::GetRandomFileName()).txt"
-$aria2ScriptUrl = "https://uupdump.net/get.php?id=$UupSetId&pack=$Pack&edition=$Edition&aria2=2"
-aria2c --no-conf --console-log-level=warn --allow-overwrite=true --auto-file-renaming=false -o"$aria2Script" $aria2ScriptUrl
+# Step 3: Download converter
+Write-Step "Downloading 7zr.exe..."
+aria2c --no-conf --console-log-level=warn -x4 -s4 `
+    --allow-overwrite=true --auto-file-renaming=false `
+    -d"files" -o"7zr.exe" "https://uupdump.net/misc/7zr.exe" 2>&1
+if (-not (Test-Path "files\7zr.exe")) { throw "7zr.exe download failed" }
 
-# Check for errors
-$errorCheck = Select-String -Path $aria2Script -Pattern "#UUPDUMP_ERROR:"
-if ($errorCheck) {
-    $errMsg = $errorCheck.Line -replace "#UUPDUMP_ERROR:", ""
-    throw "UUP Dump Error: $errMsg"
+Write-Step "Downloading uup-converter-wimlib..."
+aria2c --no-conf --console-log-level=warn -x4 -s4 `
+    --allow-overwrite=true --auto-file-renaming=false `
+    -d"files" -o"uup-converter-wimlib.7z" "https://uupdump.net/misc/uup-converter-wimlib-v121.7z" 2>&1
+if (-not (Test-Path "files\uup-converter-wimlib.7z")) { throw "converter download failed" }
+
+# Step 4: Extract converter
+Write-Step "Extracting UUP converter..."
+$7zr = "files\7zr.exe"
+$conv = "files\uup-converter-wimlib.7z"
+& $7zr -x!ConvertConfig.ini -x!CustomAppsList.txt -y x $conv 2>&1
+if (-not (Test-Path "convert-UUP.cmd")) { throw "Converter extraction failed" }
+
+Write-Step "Converter extracted. Files:"
+Get-ChildItem -Path "." -Filter "*.cmd" | ForEach-Object { Write-Step "  $($_.Name)" }
+
+# Step 5: Retrieve aria2 script for UUP
+Write-Step "Fetching UUP aria2 script..."
+$aria2Script = "aria2_script.txt"
+$scriptUrl = "https://uupdump.net/get.php?id=$UupSetId&pack=$Pack&edition=$Edition&aria2=2"
+aria2c --no-conf --console-log-level=warn --allow-overwrite=true `
+    --auto-file-renaming=false -o"$aria2Script" $scriptUrl 2>&1
+
+if (Test-Path $aria2Script) {
+    $errLine = Select-String -Path $aria2Script -Pattern "#UUPDUMP_ERROR:" -SimpleMatch
+    if ($errLine) {
+        throw "UUP Dump server error: $($errLine.Line)"
+    }
+    $fileCount = (Get-Content $aria2Script | Where-Object { $_ -match "^http" }).Count
+    Write-Step "UUP script retrieved - $fileCount files to download"
+} else {
+    throw "Failed to retrieve UUP aria2 script"
 }
 
-# Step 7: Download UUP files
-Write-Output "Downloading UUP set (this may take 10-20 minutes)..."
-aria2c --no-conf --console-log-level=warn -x16 -s16 -j5 -c -R -d"UUPs" -i"$aria2Script"
-Write-Output "UUP download complete!"
+# Step 6: Download UUP files
+Write-Step "Downloading UUP files (this may take 15-30 minutes)..."
+aria2c --no-conf --console-log-level=warn -x16 -s16 -j5 -c -R `
+    -d"UUPs" -i"$aria2Script" 2>&1
 
-# Step 8: Run UUP converter to build ISO
-Write-Output "Running UUP converter to build ISO..."
-Write-Output "This step builds the full Windows ISO from UUP files."
-Write-Output "Expected size: ~4-5GB, time: 10-20 minutes"
+$uupCount = (Get-ChildItem "UUPs" -File).Count
+Write-Step "UUP download complete - $uupCount files in UUPs/"
 
-# Modify convert-UUP.cmd to not show any prompts
-$convCmd = Get-Content "convert-UUP.cmd" -Raw
-# The CMD calls convert-UUP.ps1 - make sure it runs without pauses
+# Step 7: Run converter
+Write-Step "Starting UUP converter (convert-UUP.cmd)..."
+Write-Step "This builds the Windows ISO from UUP files (~5-10 min)"
 
-# Run the converter - it will output an ISO
-& cmd.exe /c "convert-UUP.cmd"
-$exitCode = $LASTEXITCODE
+# Run CMD and capture output
+$proc = Start-Process -FilePath "cmd.exe" -ArgumentList "/c convert-UUP.cmd" `
+    -NoNewWindow -Wait -PassThru -RedirectStandardOutput "converter_out.txt" `
+    -RedirectStandardError "converter_err.txt"
+$exitCode = $proc.ExitCode
 
-# Find the generated ISO (it's usually named like 22621.1_MULTI_X64_ZH-CN.ISO or similar)
-$generatedIso = Get-ChildItem -Path . -Filter "*.ISO" -ErrorAction SilentlyContinue | Select-Object -First 1
+if (Test-Path "converter_out.txt") {
+    Write-Step "Last 20 lines of converter output:"
+    Get-Content "converter_out.txt" -Tail 20 | ForEach-Object { Write-Step "  $_" }
+}
 
-if ($generatedIso) {
-    Write-Output "ISO generated: $($generatedIso.Name) ($([math]::Round($generatedIso.Length / 1GB, 2)) GB)"
-    if ($generatedIso.Name -ne $OutputIso) {
-        Rename-Item -Path $generatedIso.FullName -NewName $OutputIso -Force
-        Write-Output "Renamed to: $OutputIso"
+Write-Step "Converter exit code: $exitCode"
+
+# Step 8: Find generated ISO - look broadly
+Write-Step "Searching for generated ISO..."
+$iso = $null
+# Check current directory for .iso or .ISO
+$iso = Get-ChildItem -Path "." -Filter "*.iso" -ErrorAction SilentlyContinue | 
+       Where-Object { $_.Length -gt 1GB } | Sort-Object Length -Descending | Select-Object -First 1
+if (-not $iso) {
+    $iso = Get-ChildItem -Path "." -Recurse -Filter "*.iso" -ErrorAction SilentlyContinue | 
+           Where-Object { $_.Length -gt 1GB } | Sort-Object Length -Descending | Select-Object -First 1
+}
+
+if ($iso) {
+    Write-Step "Found ISO: $($iso.Name) - $([math]::Round($iso.Length/1GB,2)) GB"
+    if ($iso.Name -ne $OutputIso) {
+        Move-Item -Path $iso.FullName -Destination $OutputIso -Force
+        Write-Step "Renamed to $OutputIso"
     }
 } else {
-    # Try searching more broadly
-    $generatedIso = Get-ChildItem -Path . -Recurse -Filter "*.iso" -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($generatedIso) {
-        Write-Output "Found ISO at: $($generatedIso.FullName)"
-        Move-Item -Path $generatedIso.FullName -Destination $OutputIso -Force
-    } else {
-        throw "ISO was not generated by the converter"
-    }
+    Write-Step "ERROR: No ISO found!"
+    Write-Step "Directory listing:"
+    Get-ChildItem -Path "." | ForEach-Object { Write-Step "  $($_.Name) ($([math]::Round($_.Length/1MB,1)) MB)" }
+    throw "ISO was not generated"
 }
 
 $elapsed = (Get-Date) - $startTime
-Write-Output "=== UUP download and ISO build completed in $($elapsed.TotalMinutes.ToString('F2')) minutes ==="
+Write-Step "=== UUP ISO build completed in $([math]::Round($elapsed.TotalMinutes,1)) minutes ==="
