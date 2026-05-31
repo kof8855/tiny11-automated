@@ -9,17 +9,13 @@ on:
   workflow_dispatch:
     inputs:
       windows_version:
-        description: 'Windows version (e.g., 24H2, 25H2)'
+        description: 'Windows version (e.g., 22H2, 24H2, 25H2)'
         required: false
-        default: '25H2'
-      windows_iso_url:
-        description: 'Windows 11 ISO download URL'
-        required: true
-        default: 'https://software.download.prss.microsoft.com/dbazure/Win11_25H2_English_x64.iso?t=641a9719-5089-48d3-b683-44d9012b040e&P1=1765893811&P2=601&P3=2&P4=kPgTlzFR6%2bt9lzW6l2ITzVyc3%2fMHiCzaC5YMwf3RcQH%2bXezCHitvttx2e91%2fT%2bPcXPxVLKAYbeqrAW2mZozm1q%2bTjC4JYdInC0gROdmtKH2X84U99HD1RzRhTXmFi7lemqPDAHcOZ4yx95AzW6rzMvQF2QBsmSE%2fl5l8bWupChqEd28LHdjMXrSu3otYpyxc8S4cFluEgaLD2mkPCrqX61ij2PUrqiZM2jq%2bbz5Fx3kNXCZ3Z1pJkfKKQGb3T%2fvbbWfu7avjuU2kBDJjyeecJH3MGeTP9jsbT6oIHU95AL05%2bA43il%2f4rGDNcFGji1logGrKYi%2f%2b2fDpCFuGh9rN5w%3d%3d'
+        default: '22H2'
       image_index:
         description: 'Windows image index (1=Home, 4=Education, 6=Pro, 7=Pro N)'
         required: true
-        default: '1'
+        default: '6'
         type: choice
         options:
           - '1'
@@ -27,9 +23,9 @@ on:
           - '6'
           - '7'
       language:
-        description: 'Language (e.g., English, Spanish, French)'
+        description: 'Language'
         required: false
-        default: 'English'
+        default: 'Chinese'
       skip_cleanup:
         description: 'Skip cleanup (for debugging)'
         required: false
@@ -150,67 +146,41 @@ jobs:
           choco install aria2 -y --no-progress
           aria2c --version
 
-      - name: Display build warnings
+      - name: Copy UUP config files
         shell: powershell
         run: |
-          Write-Output "=== TINY11 CORE BUILD WARNINGS ==="
-          Write-Output ""
-          Write-Output "WARNING: You are building a Tiny11 CORE image!"
-          Write-Output ""
-          Write-Output "This build is NOT suitable for:"
-          Write-Output "  - Daily use as a primary OS"
-          Write-Output "  - Systems requiring Windows Updates"
-          Write-Output "  - Adding features or languages post-install"
-          Write-Output "  - Production environments"
-          Write-Output ""
-          Write-Output "This build IS suitable for:"
-          Write-Output "  - VM testing and development"
-          Write-Output "  - Minimal Windows 11 evaluation"
-          Write-Output "  - Rapid deployment scenarios"
-          Write-Output "  - Experimental/Lab environments"
-          Write-Output ""
-          Write-Output "Press Ctrl+C to cancel if this is not what you want."
-          Write-Output "Build will continue in 10 seconds..."
-          Start-Sleep -Seconds 10
-
-      - name: Download Windows 11 ISO
-        shell: powershell
-        run: |
-          $url = "${{ github.event.inputs.windows_iso_url }}"
-          $output = "Win11_Source.iso"
-
-          Write-Output "Downloading Windows 11 ISO from Microsoft servers..."
-          Write-Output "URL: $($url.Substring(0, 100))..."
-
-          $startTime = Get-Date
-
-          aria2c `
-            --console-log-level=info `
-            --summary-interval=30 `
-            --max-connection-per-server=${{ env.ARIA2C_CONNECTIONS }} `
-            --split=${{ env.ARIA2C_SPLIT }} `
-            --min-split-size=5M `
-            --max-tries=5 `
-            --retry-wait=3 `
-            --timeout=60 `
-            --connect-timeout=30 `
-            --continue=true `
-            --allow-overwrite=true `
-            --auto-file-renaming=false `
-            --file-allocation=none `
-            --check-integrity=true `
-            --out=$output `
-            "$url"
-
-          $downloadTime = (Get-Date) - $startTime
-
-          if (-not (Test-Path $output)) {
-            Write-Error "Download failed - ISO file not found"
+          Write-Output "Copying UUP dump configuration from repo..."
+          if (Test-Path "uup-config") {
+            Copy-Item -Path "uup-config\*" -Destination $PWD -Recurse -Force
+            Write-Output "UUP config files copied:"
+            Get-ChildItem -Path "uup-config" -Recurse | ForEach-Object { Write-Output "  $($_.Name)" }
+          } else {
+            Write-Warning "uup-config directory not found in repo!"
             exit 1
           }
 
-          $sizeGB = [math]::Round((Get-Item $output).Length / 1GB, 2)
-          Write-Output "Download complete: ${sizeGB}GB in $($downloadTime.TotalMinutes.ToString('F2')) minutes"
+      - name: Build Windows 11 ISO from UUP Dump
+        shell: powershell
+        run: |
+          $startTime = Get-Date
+          Write-Output "=== Building Windows 11 ISO from UUP Dump ==="
+          Write-Output "Set ID: 7f6836ae-9517-4e27-9f76-5823e0b6744c"
+          Write-Output "Pack: zh-cn (Chinese)"
+          Write-Output "Edition: professional;core"
+
+          # Run the automated UUP download and ISO build script
+          .\scripts\download-uup-windows.ps1
+
+          $buildTime = (Get-Date) - $startTime
+          
+          if (-not (Test-Path "Win11_Source.iso")) {
+            Write-Error "ISO was not created by the UUP builder!"
+            Get-ChildItem -Path . -Filter "*.iso" -Recurse | ForEach-Object { Write-Output "Found ISO: $($_.FullName)" }
+            exit 1
+          }
+
+          $sizeGB = [math]::Round((Get-Item "Win11_Source.iso").Length / 1GB, 2)
+          Write-Output "ISO created successfully: Win11_Source.iso (${sizeGB}GB) in $($buildTime.TotalMinutes.ToString('F2')) minutes"
 
       - name: Mount Windows ISO
         shell: powershell
