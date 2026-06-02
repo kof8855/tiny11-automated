@@ -70,16 +70,18 @@ if ($iso -and $iso.Length -gt 500MB) {
     # Extract build number from ISO name (e.g., "22621.1_MULTI_X64_ZH-CN.ISO")
     # Patterns: "22621.1_" or "22631.7079_" or "22621_MULTI"
     $buildNumber = ""
-    if ($iso.Name -match "(\d+\.\d+)[_\.]") {
+    $origIsoName = $iso.Name
+    if ($origIsoName -match "(\d+\.\d+)[_\."]) {
         $buildNumber = $Matches[1]
-    } elseif ($iso.Name -match "(\d{5})[_\.]") {
+    } elseif ($origIsoName -match "(\d{5})[_\."]) {
         $buildNumber = $Matches[1]
     }
     
-    Write-Output "Detected build: '$buildNumber'"
+    Write-Output "Detected build: '$buildNumber' from '$origIsoName'"
     
-    # Save version info - write to file and also OUTPUT for capture
-    $buildNumber | Out-File -FilePath "uup_version.txt" -NoNewline -Force
+    # Save version info and original ISO name for downstream steps
+    $origIsoName | Out-File -FilePath "uup_version.txt" -Force
+    $buildNumber | Out-File -FilePath "uup_build.txt" -NoNewline -Force
     
     # Output in a parseable format for the workflow
     Write-Output "UUP_VERSION=$buildNumber"

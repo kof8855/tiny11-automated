@@ -194,40 +194,54 @@ jobs:
         run: |
           Write-Output "=== Extracting version from UUP ISO ==="
           
-          # Method 1: Read from uup_version.txt
+          # Method 1: Read from uup_build.txt (build number from download script)
           $buildVersion = ""
-          if (Test-Path "uup_version.txt") {
+          if (Test-Path "uup_build.txt") {
+            $raw = Get-Content "uup_build.txt" -Raw
+            if ($raw) { $buildVersion = $raw.Trim(); Write-Output "Read build from uup_build.txt: $buildVersion" }
+          }
+          
+          # Method 2: Read from uup_version.txt (original ISO name)
+          if (-not $buildVersion -and (Test-Path "uup_version.txt")) {
             $raw = Get-Content "uup_version.txt" -Raw
-            if ($raw) { $buildVersion = $raw.Trim() }
-          }
-          
-          # Method 2: Extract from Win11_Source.iso filename
-          if (-not $buildVersion -and (Test-Path "Win11_Source.iso")) {
-            $isoPath = "Win11_Source.iso"
-          } else {
-            $isoPath = ""
-          }
-          if (-not $buildVersion) {
-            # Find any ISO and extract version
-            $isoFile = Get-ChildItem -Path "." -Filter "*.iso" -ErrorAction SilentlyContinue |
-                      Where-Object { $_.Length -gt 500MB } |
-                      Sort-Object Length -Descending | Select-Object -First 1
-            if ($isoFile) { $isoPath = $isoFile.FullName }
-          }
-          
-          if (-not $buildVersion -and $isoPath) {
-            # Patterns: "22621.1_MULTI" or "22631.7079_"
-            $name = [System.IO.Path]::GetFileName($isoPath)
-            if ($name -match "(\d+\.\d+)[_\.]") {
-              $buildVersion = $Matches[1]
-            } elseif ($name -match "(\d{5})[_\.]") {
-              $buildVersion = $Matches[1]
+            if ($raw) { 
+              $origName = $raw.Trim()
+              Write-Output "Read original ISO name: $origName"
+              if ($origName -match "(\d+\.\d+)[_\."]) {
+                $buildVersion = $Matches[1]
+              } elseif ($origName -match "(\d{5})[_\."]) {
+                $buildVersion = $Matches[1]
+              }
             }
+          }
+          
+          # Method 3: Extract from Win11_Source.iso using DISM (most accurate)
+          if (-not $buildVersion -and (Test-Path "Win11_Source.iso")) {
+            Write-Output "Extracting build version from ISO via DISM..."
+            $mountDir = Join-Path $env:TEMP "uup_isomount_$([System.IO.Path]::GetRandomFileName())"
+            New-Item -ItemType Directory -Force -Path $mountDir | Out-Null
+            try {
+              $mount = Mount-DiskImage -ImagePath (Join-Path $PWD "Win11_Source.iso") -PassThru -StorageType ISO -ErrorAction SilentlyContinue
+              Start-Sleep -Seconds 3
+              $vol = Get-Volume -DiskImage $mount -ErrorAction SilentlyContinue
+              if ($vol -and $vol.DriveLetter) {
+                $dl = "$($vol.DriveLetter):"
+                if (Test-Path "$dl\sources\install.wim") {
+                  $img = Get-WindowsImage -ImagePath "$dl\sources\install.wim" -ErrorAction SilentlyContinue | Select-Object -First 1
+                  if ($img -and $img.Version -match "(\d+\.\d+)") {
+                    $buildVersion = $Matches[1]
+                    Write-Output "DISM reports version: $($img.Version)"
+                  }
+                }
+                Dismount-DiskImage -ImagePath $mount | Out-Null
+              }
+            } catch { Write-Warning "DISM extraction failed: $_" }
+            Remove-Item -Path $mountDir -Force -ErrorAction SilentlyContinue
           }
           
           # Fallback to Windows version input
           if (-not $buildVersion) {
-            Write-Warning "Could not extract build version from ISO, using version input"
+            Write-Warning "Could not extract build version, using version input"
             $buildVersion = "${{ github.event.inputs.windows_version }}"
           }
           
